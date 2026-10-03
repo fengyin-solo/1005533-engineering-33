@@ -38,6 +38,30 @@ cd frontend
 npm run build
 ```
 
+## 复位演示数据
+
+```bash
+make reset-demo        # 仓库根目录；或 cd frontend && npm run reset:demo
+```
+
+数据在浏览器 `localStorage` 里，命令行够不到，所以这条命令的做法是：先核对依赖
+（Node ≥ 18、npm 可用，`node_modules` 缺失就先装），再推进
+`frontend/src/data/seed-version.ts` 里的种子版本号，最后跑一遍类型检查确认跑通。
+前端下次打开发现版本号变了，就按复位配方回滚，不用手动清浏览器存储：
+
+- **灭菌验证**恢复示例数据（STER-0001 ~ STER-0003）；
+- **成品检验**条数归零，之后每确认一份灭菌验证，结果会重新落到成品检验的待办；
+- 其余模块的数据原样保留。
+
+## 业务规则
+
+- 状态顺次往下推进，倒序挡回：只能沿 `statuses` 顺序往前走，回退会被拒绝。
+- 同一份记录重复提交只算一次：目标状态与当前一致时不重复生效、不重复落待办。
+- 灭菌验证的装载方式与温度探头数以 `frontend/src/data/sterilize-ledger.ts` 台账为准
+  （验证组核定口径），记录与台账不一致时按台账统一，列表、导出等入口取回的是同一份。
+- 温度探头精度不够（台账精度差于 0.5℃）时验证退回校准，状态不推进、记录标异常。
+- 确认验证要求验证人已签字；确认后结果落到成品检验待办（待检验）。
+
 ## 业务模块
 
 | 模块 | 目录 | 业务对象 | 主要字段 |
@@ -66,6 +90,9 @@ npm run build
 - 每个模块的页面在 `frontend/src/views/<模块>/index.vue`，页面只负责渲染，读写统一走
   `frontend/src/api/local-service.ts`。
 - 字段、状态、动作与流转目标集中在 `frontend/src/data/modules.ts`；示例数据在
-  `frontend/src/data/seed.ts`。
-- 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
-- 想回到初始数据：清掉浏览器里 `pharma-cleanroom:entries` 这一项，或调用 `resetModule(模块)`。
+  `frontend/src/data/seed.ts`；灭菌验证的核定口径在 `frontend/src/data/sterilize-ledger.ts`。
+- 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断；灭菌验证的专属规则
+  （台账统一、退回校准、落成品检验待办）在 `frontend/src/api/sterilize-rules.ts`，由
+  `local-service.ts` 调用。
+- 想回到初始数据：跑 `make reset-demo`（推荐），或清掉浏览器里 `pharma-cleanroom:entries`
+  这一项，或调用 `resetModule(模块)`。

@@ -1,5 +1,11 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import {
+  applyLedgerToRow,
+  enqueueFinishedQcTodo,
+  guardSterilizeTransition,
+  normalizeForRead,
+} from '@/api/sterilize-rules'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -24,7 +30,7 @@ export function filterRows(rows: EntryRow[], filters: Record<string, string>): E
 }
 
 export function listEntries(key: string, filters: Record<string, string> = {}): PageResult {
-  const matched = filterRows(listRows(key), filters)
+  const matched = filterRows(normalizeForRead(key, listRows(key)), filters)
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
@@ -40,19 +46,46 @@ export function runAction(key: string, id: number, action: string): ActionResult
     return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
   }
   const current = String(rows[index].status)
-  if (current === target) {
-    return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
+  const currentIndex = meta.statuses.indexOf(current)
+  const targetIndex = meta.statuses.indexOf(target)
+  // 同一份记录重复提交只算一次：状态没变就不重复生效、不重复落待办
+  if (currentIndex === targetIndex) {
+    return { ok: true, message: `${meta.entity}已是「${target}」，重复${action}按一次计` }
+  }
+  // 状态顺次往下推进，倒序挡回
+  if (targetIndex < currentIndex) {
+    return { ok: false, message: `${meta.entity}状态只能顺次推进，不允许从「${current}」回退到「${target}」` }
+  }
+  let working = rows[index]
+  const isNegativeAction = NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb))
+  if (key === 'sterilize' && !isNegativeAction) {
+    const guard = guardSterilizeTransition(working, action)
+    if (!guard.ok) {
+      if (guard.calibrate) {
+        // 退回校准：状态不推进，只把记录标成异常，看板上能看出来
+        const flagged = [...rows]
+        flagged[index] = { ...working, abnormal: true }
+        saveRows(key, flagged)
+      }
+      return { ok: false, message: guard.message }
+    }
+    // 推进时把台账口径写回记录：装载方式、温度探头数与台账保持一致
+    working = applyLedgerToRow(working)
   }
   const lastStatus = meta.statuses[meta.statuses.length - 1]
   const updated: EntryRow = {
-    ...rows[index],
+    ...working,
     status: target,
     pending: target !== lastStatus,
-    abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
+    abnormal: isNegativeAction,
   }
   const next = [...rows]
   next[index] = updated
   saveRows(key, next)
+  if (key === 'sterilize' && action === '确认验证') {
+    // 验证结果落到成品检验的待办
+    enqueueFinishedQcTodo(updated)
+  }
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
 }
 
@@ -65,7 +98,7 @@ export function exportEntries(key: string): { filename: string; content: string 
   const meta = moduleMeta(key)
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
-  for (const row of listRows(key)) {
+  for (const row of normalizeForRead(key, listRows(key))) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
   return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
