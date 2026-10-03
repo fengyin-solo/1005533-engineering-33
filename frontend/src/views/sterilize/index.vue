@@ -65,6 +65,7 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条灭菌验证记录</span>
+      <span v-if="successMessage" class="success-text">{{ successMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -79,10 +80,12 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { useSessionStore } from '@/stores/session'
 import type { EntryRow } from '@/data/types'
 
+const session = useSessionStore()
 const meta = moduleMeta('sterilize')
-const columns = ["验证编号", "灭菌设备", "灭菌程序", "装载方式", "温度探头数", "灭菌保持时间", "验证日期", "验证状态"]
+const columns = ["验证编号", "灭菌设备", "灭菌程序", "装载方式", "温度探头数", "灭菌保持时间", "验证日期", "验证人", "验证状态"]
 const actions = ["提交验证", "确认验证", "作废验证"]
 const statuses = ["待验证", "灭菌中", "已验证", "已失效"]
 const stats = [{"label": "待验证程序", "value": 0}, {"label": "灭菌中批次", "value": 0}, {"label": "已验证程序", "value": 0}]
@@ -90,6 +93,7 @@ const stats = [{"label": "待验证程序", "value": 0}, {"label": "灭菌中批
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const successMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -114,16 +118,20 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  successMessage.value = ''
+  // 验证人要签字：页面没开放手工录入，提交时以当前登录操作员作为签字人
+  const result = applyAction(meta.key, Number(row.id), action, session.operator)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  successMessage.value = result.message
   reload()
 }
 
 function reload() {
   errorMessage.value = ''
+  successMessage.value = ''
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
